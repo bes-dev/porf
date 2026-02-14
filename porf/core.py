@@ -6,6 +6,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from typing import Callable
 
@@ -507,7 +508,8 @@ def _research_turn(topic: str, agent: dict, section: MindMapNode,
         log(f"      error (skipping turn): {e}")
         return {"role": role, "section": section.name,
                 "queries": [], "results": [], "cited_indices": set(),
-                "target_node": section, "question": section.name}
+                "target_node": section, "question": section.name,
+                "restructure": [], "index_map": {}}
 
 
 def _research_turn_inner(topic: str, role: str, desc: str, section: MindMapNode,
@@ -581,12 +583,10 @@ def _research_turn_inner(topic: str, role: str, desc: str, section: MindMapNode,
         if new_claim:
             log(f"      claim: {new_claim[:80]}")
 
-        # 6. Apply restructure if proposed
+        # 6. Collect restructure proposals (applied after parallel turns)
         restructure = result.get("restructure") or []
-        if isinstance(restructure, list) and restructure:
-            log(f"      restructure: {len(restructure)} changes")
-            _apply_restructure(mm, restructure, index_map, log)
     else:
+        restructure = []
         log(f"      no results")
 
     return {
@@ -594,6 +594,8 @@ def _research_turn_inner(topic: str, role: str, desc: str, section: MindMapNode,
         "queries": queries, "results": all_results, "cited_indices": cited,
         "target_node": section,
         "question": section.claim or section.name,
+        "restructure": restructure if isinstance(restructure, list) else [],
+        "index_map": index_map,
     }
 
 
@@ -612,22 +614,42 @@ def _roundtable(topic: str, perspectives: list[dict], mm: MindMap,
     for rnd in range(max_rounds):
         log(f"  Round {rnd + 1}/{max_rounds}...")
 
-        round_had_work = False
+        # Pre-assign different sections to each expert
+        used: set[MindMapNode] = set()
+        assignments: list[tuple[dict, MindMapNode]] = []
         for agent in perspectives:
-            section = _assign_section(mm, locked_nodes)
+            section = _assign_section(mm, locked_nodes | used)
             if section is None:
                 continue
+            assignments.append((agent, section))
+            used.add(section)
 
-            round_had_work = True
-            turn = _research_turn(topic, agent, section, mm, prof,
-                                  search_lang, output_lang, engine, llm, ov, log)
-            if turn.get("results"):
-                inserted = _insert_turn_snippets(mm, turn, encoder, llm, ov)
-                log(f"      +{inserted} snippets")
-
-        if not round_had_work:
+        if not assignments:
             log("  All sections converged!")
             break
+
+        # Run expert turns in parallel
+        turns: list[dict] = []
+        with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
+            futures = {
+                pool.submit(
+                    _research_turn, topic, agent, section, mm, prof,
+                    search_lang, output_lang, engine, llm, ov, log,
+                ): section.name
+                for agent, section in assignments
+            }
+            for future in as_completed(futures):
+                turns.append(future.result())
+
+        # Apply results sequentially: insert snippets + restructures
+        for turn in turns:
+            if turn.get("results"):
+                inserted = _insert_turn_snippets(mm, turn, encoder, llm, ov)
+                log(f"      +{inserted} snippets [{turn['section']}]")
+            restructure = turn.get("restructure", [])
+            if restructure:
+                log(f"      restructure: {len(restructure)} changes [{turn['section']}]")
+                _apply_restructure(mm, restructure, turn.get("index_map", {}), log)
 
         _check_convergence(mm, lock_threshold, locked_nodes)
         n_leaves = len(mm.root.leaves())
