@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "porf"
+version = "0.1.0"
+description = "PORF: Publish Original Research Fast"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Your Name", email = "your@email.com" }
+]
+keywords = [
+    "research",
+    "llm",
+    "ai",
+    "article-writer",
+    "deep-research",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "litellm>=1.0.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+search = [
+    "ddgs",
+]
+semantic = [
+    "sentence-transformers",
+    "numpy",
+]
+fetch = [
+    "trafilatura>=1.12.0",
+]
+cli = [
+    "rich",
+    "questionary",
+]
+all = [
+    "ddgs",
+    "trafilatura>=1.12.0",
+    "sentence-transformers",
+    "numpy",
+    "rich",
+    "questionary",
+]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+porf = "porf.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/bes-dev/porf"
+Documentation = "https://github.com/bes-dev/porf#readme"
+Repository = "https://github.com/bes-dev/porf"
+Issues = "https://github.com/bes-dev/porf/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["porf"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
