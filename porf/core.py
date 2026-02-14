@@ -26,6 +26,7 @@ LLM = Callable[..., str]
 
 def _llm_call(model: str, prompt: str, api_base: str | None = None,
               _usage: dict | None = None, _usage_lock: threading.Lock | None = None,
+              _trace: list | None = None, _trace_lock: threading.Lock | None = None,
               max_retries: int = 5, max_tokens: int | None = None,
               response_format: dict | None = None,
               timeout: int = 120) -> str:
@@ -45,9 +46,14 @@ def _llm_call(model: str, prompt: str, api_base: str | None = None,
     for attempt in range(max_retries):
         try:
             resp = litellm.completion(**kwargs)
-            if _usage and (u := getattr(resp, "usage", None)):
+            content = resp.choices[0].message.content
+
+            pt = ct = 0
+            if u := getattr(resp, "usage", None):
                 pt = getattr(u, "prompt_tokens", 0) or 0
                 ct = getattr(u, "completion_tokens", 0) or 0
+
+            if _usage:
                 if _usage_lock:
                     with _usage_lock:
                         _usage["prompt_tokens"] += pt
@@ -55,7 +61,21 @@ def _llm_call(model: str, prompt: str, api_base: str | None = None,
                 else:
                     _usage["prompt_tokens"] += pt
                     _usage["completion_tokens"] += ct
-            return resp.choices[0].message.content
+
+            if _trace is not None:
+                entry = {
+                    "timestamp": time.time(), "model": model,
+                    "prompt": prompt, "response": content,
+                    "json_mode": response_format is not None,
+                    "usage": {"prompt_tokens": pt, "completion_tokens": ct},
+                }
+                if _trace_lock:
+                    with _trace_lock:
+                        _trace.append(entry)
+                else:
+                    _trace.append(entry)
+
+            return content
         except KeyboardInterrupt:
             raise
         except Exception as e:
@@ -1034,12 +1054,16 @@ def research(
     target_words: int | None = None,
     prompts_override: dict[str, str] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    save_trace: bool = True,
 ) -> Report:
     """Research via roundtable discourse → polished article."""
     log = on_progress or (lambda _: None)
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    trace = [] if save_trace else None
+    _lock = threading.Lock()
     llm: LLM = partial(_llm_call, model, api_base=api_base,
-                        _usage=usage, _usage_lock=threading.Lock())
+                        _usage=usage, _usage_lock=_lock,
+                        _trace=trace, _trace_lock=_lock)
 
     prof = PROFILES.get(profile, PROFILES["balanced"])
     st = STYLES.get(style, STYLES["analytical"])
@@ -1083,6 +1107,7 @@ def research(
         else:
             report = Report(topic=topic, sections=[], sources=[])
 
+    report.trace = trace or []
     total_tokens = usage["prompt_tokens"] + usage["completion_tokens"]
     if total_tokens:
         log(f"\nTokens: {total_tokens:,} (prompt: {usage['prompt_tokens']:,}, "

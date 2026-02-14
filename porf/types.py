@@ -27,6 +27,7 @@ class Report:
     topic: str
     sections: list[Section]
     sources: list[Source]
+    trace: list[dict] = field(default_factory=list)
 
     @property
     def markdown(self) -> str:

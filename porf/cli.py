@@ -1,6 +1,7 @@
 """Interactive CLI for PORF."""
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -166,6 +167,7 @@ def run_research(config, console):
             output_language=config.get("output_language", "auto"),
             target_words=config.get("target_words"),
             on_progress=lambda msg: _progress_log(console, msg),
+            save_trace=config.get("save_trace", True),
         )
     except KeyboardInterrupt:
         print("\nInterrupted.")
@@ -198,6 +200,7 @@ def main():
     parser.add_argument("-o", "--output", help="Output file")
     parser.add_argument("-w", "--words", type=int, default=None, help="Target article length in words")
     parser.add_argument("--api-base", help="API base URL for local models")
+    parser.add_argument("--no-trace", action="store_true", help="Disable LLM call trace logging")
 
     args = parser.parse_args()
     console = Console() if RICH_AVAILABLE else None
@@ -215,6 +218,7 @@ def main():
             "languages": _parse_languages(args.lang), "output_language": args.out_lang,
             "search": args.search, "model": args.model,
             "api_base": args.api_base, "target_words": args.words,
+            "save_trace": not args.no_trace,
         }
 
     if console:
@@ -232,6 +236,19 @@ def main():
             console.print(f"\n[green]✓[/] Saved to [bold]{output}[/]")
     else:
         print(report.markdown)
+
+    # Save trace
+    if report.trace:
+        if output and output != "print":
+            trace_path = str(Path(output).with_suffix(".trace.jsonl"))
+        else:
+            safe = "".join(c if c.isalnum() or c in " -_" else "" for c in config["topic"])
+            trace_path = f"{safe[:50].strip().replace(' ', '_').lower() or 'porf'}.trace.jsonl"
+        with open(trace_path, "w") as f:
+            for entry in report.trace:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if console:
+            console.print(f"[green]✓[/] Trace: [bold]{trace_path}[/] ({len(report.trace)} LLM calls)")
 
 
 if __name__ == "__main__":
